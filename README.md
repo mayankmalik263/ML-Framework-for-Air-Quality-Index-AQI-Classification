@@ -1,8 +1,3 @@
-I see exactly what happened there. The chat interface’s markdown parser gets confused when it sees code blocks (like `bash` or `python`) nested *inside* a master markdown block, so it breaks it apart into separate sections instead of giving you one giant copyable chunk. 
-
-I've fixed it by using a higher-level raw text wrapper. You can click "Copy" on the block below and it will copy the entire document perfectly in one go, keeping all your `bash` and `text` formatting intact for GitHub.
-
-````text
 # 🌍 Delhi NCR Air Quality Index (AQI) Classification Engine
 
 ## 📊 Executive Summary
@@ -94,4 +89,3 @@ Select a scenario to test:
 
 ## 📊 Evaluation & Metrics
 The model prioritizes the **Macro F1-Score** and **Precision** on the "Bad" category. In air quality modeling, false negatives (predicting "Good" when the air is "Bad") carry a high public health cost. The model is specifically evaluated on its ability to define the complex boundary between "Poor" and "Bad" index classifications based on atmospheric stagnation.
-````
