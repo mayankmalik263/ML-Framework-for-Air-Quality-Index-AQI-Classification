@@ -1,0 +1,2 @@
+https://www.kaggle.com/datasets/vishardmehta/delhi-pollution-aqi-dataset
+https://www.kaggle.com/datasets/sohails07/delhi-weather-and-aqi-dataset-2025
