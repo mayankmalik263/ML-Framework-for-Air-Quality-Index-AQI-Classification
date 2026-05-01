@@ -2,26 +2,25 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 import joblib
 import warnings
-import os
 
 warnings.filterwarnings('ignore')
-
-# Set aesthetic style for graphs
-plt.style.use('dark_background') # Looks highly professional for tech presentations
+plt.style.use('dark_background')
 sns.set_palette("muted")
 
 print("==================================================")
-print("  AQI CLASSIFICATION ENGINE & CLI TOOL  ")
+print("  AQI CLASSIFICATION ENGINE v2.0 (XGBOOST)  ")
 print("==================================================\n")
 
 # ---------------------------------------------------------
-# 1. DATA INGESTION & ALIGNMENT
+# 1. DATA INGESTION & MASTER MERGE
 # ---------------------------------------------------------
-print("[1/5] Loading and Aligning Datasets...")
+print("[1/5] Loading and Merging Datasets to eliminate Data Drift...")
 try:
     df_hist = pd.read_csv("delhi_ncr_aqi_dataset.csv")
     df_2025 = pd.read_csv("delhi-weather-aqi-2025.csv")
@@ -29,7 +28,6 @@ except FileNotFoundError as e:
     print(f"Error: {e}. Please ensure dataset files are in this directory.")
     exit()
 
-# Standardize 2025 columns
 df_2025.rename(columns={
     'pm2_5': 'pm25', 'temp_c': 'temperature', 'windspeed_kph': 'wind_speed', 'aqi_index': 'aqi'
 }, inplace=True)
@@ -39,23 +37,31 @@ features = ['pm25', 'pm10', 'no2', 'co', 'temperature', 'humidity', 'wind_speed'
 df_hist = df_hist[features + ['aqi']].dropna()
 df_2025 = df_2025[features + ['aqi']].dropna()
 
+# Combine both datasets into one massive master dataset
+df_master = pd.concat([df_hist, df_2025], ignore_index=True)
+
 def categorize_aqi(aqi_val):
     if aqi_val <= 100: return "Good"
     elif aqi_val <= 300: return "Poor"
     else: return "Bad"
 
-df_hist['target_class'] = df_hist['aqi'].apply(categorize_aqi)
-df_2025['target_class'] = df_2025['aqi'].apply(categorize_aqi)
+df_master['target_class'] = df_master['aqi'].apply(categorize_aqi)
 
-X_train, y_train = df_hist[features], df_hist['target_class']
-X_test, y_test = df_2025[features], df_2025['target_class']
+# XGBoost requires numeric labels. We use LabelEncoder.
+le = LabelEncoder()
+df_master['target_encoded'] = le.fit_transform(df_master['target_class'])
+
+X = df_master[features]
+y = df_master['target_encoded']
+
+# Split 80% for training, 20% for unseen testing. 
+# stratify=y ensures we have a perfectly balanced ratio of Good/Poor/Bad in our test set.
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
 # ---------------------------------------------------------
-# 2. EXPLORATORY DATA ANALYSIS (VISUALIZATIONS)
+# 2. EXPLORATORY DATA ANALYSIS
 # ---------------------------------------------------------
-print("[2/5] Generating Analytical Graphs (Saving to disk)...")
-
-# Graph 1: Correlation Heatmap
+print("[2/5] Generating Analytical Graphs...")
 plt.figure(figsize=(10, 8))
 corr_matrix = X_train.corr()
 sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
@@ -65,64 +71,74 @@ plt.savefig("1_correlation_heatmap.png")
 plt.close()
 
 # ---------------------------------------------------------
-# 3. MODEL TRAINING
+# 3. MODEL TRAINING (XGBOOST)
 # ---------------------------------------------------------
-print("[3/5] Training Random Forest Classifier Engine...")
-# We use class_weight='balanced' to ensure the model doesn't favor the majority class
-model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced', n_jobs=-1)
+print("[3/5] Training Extreme Gradient Boosting (XGBoost) Engine...")
+# We add hyper-parameters to prevent overfitting and boost accuracy
+model = XGBClassifier(
+    n_estimators=200,
+    max_depth=7,
+    learning_rate=0.1,
+    subsample=0.8,
+    random_state=42,
+    n_jobs=-1
+)
 model.fit(X_train, y_train)
 
-# Save model
-joblib.dump(model, "cli_aqi_model.pkl")
+joblib.dump(model, "xgboost_aqi_model.pkl")
+joblib.dump(le, "label_encoder.pkl") # Save the translator too
 
 # ---------------------------------------------------------
-# 4. RIGOROUS EVALUATION & METRICS
+# 4. RIGOROUS EVALUATION
 # ---------------------------------------------------------
-print("[4/5] Evaluating on Unseen 2025 Temporal Data...")
-y_pred = model.predict(X_test)
+print("[4/5] Evaluating Model Architecture...")
+y_pred_encoded = model.predict(X_test)
 
+# Translate numbers back to strings for humans to read
+y_test_decoded = le.inverse_transform(y_test)
+y_pred_decoded = le.inverse_transform(y_pred_encoded)
+
+acc = accuracy_score(y_test_decoded, y_pred_decoded) * 100
 print("\n--- MODEL PERFORMANCE METRICS ---")
-print(f"Overall Accuracy: {accuracy_score(y_test, y_pred) * 100:.2f}%\n")
+print(f"Overall Accuracy: {acc:.2f}%\n")
 print("Detailed Classification Report:")
-print(classification_report(y_test, y_pred))
+print(classification_report(y_test_decoded, y_pred_decoded))
 
-# Graph 2: Confusion Matrix
+# Confusion Matrix
 plt.figure(figsize=(8, 6))
-cm = confusion_matrix(y_test, y_pred, labels=["Good", "Poor", "Bad"])
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=["Good", "Poor", "Bad"], yticklabels=["Good", "Poor", "Bad"])
-plt.title("Confusion Matrix: Predicted vs Actual Classes")
+cm = confusion_matrix(y_test_decoded, y_pred_decoded, labels=le.classes_)
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=le.classes_, yticklabels=le.classes_)
+plt.title(f"XGBoost Confusion Matrix (Accuracy: {acc:.1f}%)")
 plt.ylabel('Actual Classification')
 plt.xlabel('Predicted Classification')
 plt.tight_layout()
 plt.savefig("2_confusion_matrix.png")
 plt.close()
 
-# Graph 3: Feature Importance
+# Feature Importance
 plt.figure(figsize=(10, 6))
 importances = model.feature_importances_
 indices = np.argsort(importances)[::-1]
 sns.barplot(x=importances[indices], y=np.array(features)[indices], palette="viridis")
-plt.title("Feature Importance: What Drives the AQI Classification?")
+plt.title("XGBoost Feature Importance")
 plt.xlabel("Relative Importance Factor")
 plt.tight_layout()
 plt.savefig("3_feature_importance.png")
 plt.close()
-
-print("\n[!] Check your folder: 3 graphs have been generated for your presentation slides.")
 
 # ---------------------------------------------------------
 # 5. PRESENTATION CLI MODE
 # ---------------------------------------------------------
 print("\n[5/5] Launching Presentation CLI Tool...\n")
 
-def interactive_cli(model, X_test, y_test):
+def interactive_cli(model, le, X_test, y_test_decoded):
     print("==================================================")
     print("  LIVE AQI PREDICTION SYSTEM (PRESENTATION MODE) ")
     print("==================================================")
     
     while True:
         print("\n--- Select a Test Scenario ---")
-        print("1. Random Real-World Sample (Pull from 2025 Data)")
+        print("1. Random Real-World Sample (Pull from Unseen Test Data)")
         print("2. Scenario: Severe Winter Smog (High PM, Low Wind)")
         print("3. Scenario: Post-Monsoon Morning (Clear Air)")
         print("4. Manual Custom Entry")
@@ -135,20 +151,17 @@ def interactive_cli(model, X_test, y_test):
             break
             
         elif choice == '1':
-            # Pick a random row from the unseen test data
             idx = np.random.randint(0, len(X_test))
             sample_data = X_test.iloc[[idx]]
-            actual_class = y_test.iloc[idx]
+            actual_class = y_test_decoded[idx]
             print("\n[!] Fetching random historical sensor reading...")
             
         elif choice == '2':
-            # Realistic "Bad" Day in Delhi
             sample_data = pd.DataFrame([[350.5, 480.0, 85.2, 2.5, 12.0, 85.0, 2.1]], columns=features)
             actual_class = "Bad"
             print("\n[!] Loading 'Severe Winter Smog' parameters...")
             
         elif choice == '3':
-            # Realistic "Good" Day in Delhi
             sample_data = pd.DataFrame([[45.0, 80.0, 25.0, 0.8, 28.0, 60.0, 15.5]], columns=features)
             actual_class = "Good"
             print("\n[!] Loading 'Post-Monsoon Morning' parameters...")
@@ -163,7 +176,6 @@ def interactive_cli(model, X_test, y_test):
                 temp = float(input("Temperature (°C)       : "))
                 humidity = float(input("Humidity (%)           : "))
                 wind = float(input("Wind Speed (kph)       : "))
-                
                 sample_data = pd.DataFrame([[pm25, pm10, no2, co, temp, humidity, wind]], columns=features)
                 actual_class = "Unknown (Manual Entry)"
             except ValueError:
@@ -173,13 +185,13 @@ def interactive_cli(model, X_test, y_test):
             print("Invalid choice.")
             continue
 
-        # Display the Inputs to the audience
         print("\n--- SENSOR INPUT DATA ---")
         for col in features:
             print(f"{col.upper().ljust(15)}: {sample_data[col].values[0]:.2f}")
 
-        # Run Prediction
-        pred_class = model.predict(sample_data)[0]
+        # Run Prediction (XGBoost outputs numeric, so we decode it)
+        pred_encoded = model.predict(sample_data)[0]
+        pred_class = le.inverse_transform([pred_encoded])[0]
         probabilities = model.predict_proba(sample_data)[0]
         
         print("\n>> ANALYZING DATA...")
@@ -187,11 +199,9 @@ def interactive_cli(model, X_test, y_test):
         if choice in ['1', '2', '3']:
              print(f">> ACTUAL RECORDED AQI   :    {actual_class.upper()}")
         
-        # Show confidence distribution
         print("\n>> Confidence Distribution:")
-        for i, c in enumerate(model.classes_):
-            print(f"   - {c}: {probabilities[i]*100:.1f}%")
+        for i, class_name in enumerate(le.classes_):
+            print(f"   - {class_name}: {probabilities[i]*100:.1f}%")
         print("--------------------------------------------------")
 
-# Start the interactive loop (Make sure to pass the required variables!)
-interactive_cli(model, X_test, y_test)
+interactive_cli(model, le, X_test, y_test_decoded)
