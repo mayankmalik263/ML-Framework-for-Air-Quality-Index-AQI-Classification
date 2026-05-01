@@ -127,7 +127,7 @@ plt.savefig("3_feature_importance.png")
 plt.close()
 
 # ---------------------------------------------------------
-# 5. PRESENTATION CLI MODE
+# 5. PRESENTATION CLI MODE (DYNAMIC FILTERING)
 # ---------------------------------------------------------
 print("\n[5/5] Launching Presentation CLI Tool...\n")
 
@@ -136,11 +136,15 @@ def interactive_cli(model, le, X_test, y_test_decoded):
     print("  LIVE AQI PREDICTION SYSTEM (PRESENTATION MODE) ")
     print("==================================================")
     
+    # We create a combined test dataframe to easily filter for scenarios
+    test_df = X_test.copy()
+    test_df['actual_aqi'] = y_test_decoded
+    
     while True:
         print("\n--- Select a Test Scenario ---")
         print("1. Random Real-World Sample (Pull from Unseen Test Data)")
-        print("2. Scenario: Severe Winter Smog (High PM, Low Wind)")
-        print("3. Scenario: Post-Monsoon Morning (Clear Air)")
+        print("2. Scenario: Severe Winter Smog (Dynamically pulled from data)")
+        print("3. Scenario: Clear Monsoon Air (Dynamically pulled from data)")
         print("4. Manual Custom Entry")
         print("5. Exit")
         
@@ -151,20 +155,36 @@ def interactive_cli(model, le, X_test, y_test_decoded):
             break
             
         elif choice == '1':
-            idx = np.random.randint(0, len(X_test))
-            sample_data = X_test.iloc[[idx]]
-            actual_class = y_test_decoded[idx]
+            idx = np.random.randint(0, len(test_df))
+            sample_data = test_df.iloc[[idx]][features]
+            actual_class = test_df.iloc[idx]['actual_aqi']
             print("\n[!] Fetching random historical sensor reading...")
             
         elif choice == '2':
-            sample_data = pd.DataFrame([[350.5, 480.0, 85.2, 2.5, 12.0, 85.0, 2.1]], columns=features)
-            actual_class = "Bad"
-            print("\n[!] Loading 'Severe Winter Smog' parameters...")
+            # Dynamically find a Severe Smog day: High PM, Low Wind, Bad AQI
+            smog_pool = test_df[(test_df['pm25'] > 300) & (test_df['wind_speed'] < 5) & (test_df['actual_aqi'] == 'Bad')]
+            if len(smog_pool) > 0:
+                # Pick a random row from this filtered pool
+                sample_row = smog_pool.sample(1)
+                sample_data = sample_row[features]
+                actual_class = sample_row['actual_aqi'].values[0]
+                print("\n[!] Dynamically extracted a 'Severe Winter Smog' event from the dataset...")
+            else:
+                print("\n[ERROR] Could not find a matching scenario in the test slice. Try Option 1.")
+                continue
             
         elif choice == '3':
-            sample_data = pd.DataFrame([[45.0, 80.0, 25.0, 0.8, 28.0, 60.0, 15.5]], columns=features)
-            actual_class = "Good"
-            print("\n[!] Loading 'Post-Monsoon Morning' parameters...")
+            # Dynamically find a Clear Air day: Low PM, Good AQI
+            clear_pool = test_df[(test_df['pm25'] < 50) & (test_df['actual_aqi'] == 'Good')]
+            if len(clear_pool) > 0:
+                # Pick a random row from this filtered pool
+                sample_row = clear_pool.sample(1)
+                sample_data = sample_row[features]
+                actual_class = sample_row['actual_aqi'].values[0]
+                print("\n[!] Dynamically extracted a 'Clear Air' event from the dataset...")
+            else:
+                print("\n[ERROR] Could not find a matching scenario in the test slice. Try Option 1.")
+                continue
             
         elif choice == '4':
             try:
@@ -204,4 +224,5 @@ def interactive_cli(model, le, X_test, y_test_decoded):
             print(f"   - {class_name}: {probabilities[i]*100:.1f}%")
         print("--------------------------------------------------")
 
+# Make sure this line is at the very bottom calling the function!
 interactive_cli(model, le, X_test, y_test_decoded)
